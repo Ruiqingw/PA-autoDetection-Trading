@@ -8,10 +8,14 @@ from typing import Any
 from config.settings import Settings
 from data.models import BookSnapshot, Candle, SignalRecord, to_top_of_book, Trade
 from features.orderflow import (
+    BidAskIndicator,
+    DeltaIndicator,
     SpreadMetrics,
     TradeFlowSnapshot,
     aggregate_trade_flow,
+    compute_bid_ask_indicator,
     compute_book_imbalance,
+    compute_delta_indicator,
     compute_top_of_book_spread,
 )
 from features.response import MarketResponseMetrics, compute_response_metrics
@@ -23,6 +27,8 @@ class MonitorSnapshot:
     symbol: str
     timeframe: str
     trade_flow: TradeFlowSnapshot
+    delta_indicator: DeltaIndicator
+    bid_ask_indicator: BidAskIndicator | None
     spread: dict[str, Any] | None
     book_imbalance: float
     response: MarketResponseMetrics
@@ -34,6 +40,8 @@ class MonitorSnapshot:
             "symbol": self.symbol,
             "timeframe": self.timeframe,
             "trade_flow": self.trade_flow.as_dict(),
+            "delta_indicator": self.delta_indicator.as_dict(),
+            "bid_ask_indicator": self.bid_ask_indicator.as_dict() if self.bid_ask_indicator else None,
             "spread": self.spread,
             "book_imbalance": self.book_imbalance,
             "response": self.response.as_dict(),
@@ -70,6 +78,11 @@ def analyze_market_state(
     settings: Settings,
 ) -> MonitorSnapshot:
     trade_flow = aggregate_trade_flow(trades, window_seconds=settings.features.trade_flow_window_seconds)
+    delta_indicator = compute_delta_indicator(trades, window_seconds=settings.features.trade_flow_window_seconds)
+    bid_ask_indicator = compute_bid_ask_indicator(
+        book_snapshot,
+        depth_levels=settings.features.book_depth_levels,
+    )
     top_of_book = to_top_of_book(book_snapshot)
     spread_metrics = compute_top_of_book_spread(top_of_book)
     book_imbalance = compute_book_imbalance(
@@ -98,6 +111,8 @@ def analyze_market_state(
         symbol=symbol,
         timeframe=timeframe,
         trade_flow=trade_flow,
+        delta_indicator=delta_indicator,
+        bid_ask_indicator=bid_ask_indicator,
         spread=spread_metrics.as_dict() if spread_metrics else None,
         book_imbalance=book_imbalance,
         response=response,

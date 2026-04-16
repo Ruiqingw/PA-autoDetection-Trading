@@ -1,8 +1,16 @@
 # Crypto Trading Assistant
 
-Backend-only discretionary crypto trading assistant built around Kraken public market data.
+Discretionary crypto trading assistant built around Kraken public market data.
 
-This first version is designed to help monitor BTC, ETH, and SOL without placing orders. It fetches public market data, normalizes and stores it locally, computes first-pass order-flow and market-response features, detects a simple bearish breakdown-retest setup, and can emit optional Telegram or email alerts.
+This version now includes both the backend monitoring pipeline and a local GUI application. It fetches public market data, normalizes and stores it locally, computes first-pass order-flow and market-response features, detects a simple bearish breakdown-retest setup, and can display buy/sell strength plus flow-vs-price imbalances directly on the chart. Optional Telegram and email alerts are also supported.
+
+Supported chart / fetch timeframes in the app:
+- `1m`
+- `5m`
+- `15m`
+- `1h`
+- `4h`
+- `1d`
 
 ## Implemented in v0.1
 
@@ -10,6 +18,11 @@ This first version is designed to help monitor BTC, ETH, and SOL without placing
 - Kraken WebSocket v2 public client for `ohlc`, `trade`, and `book`
 - Internal typed market-data models and normalization helpers
 - SQLite storage for asset pairs, candles, trades, top-of-book rows, and signals
+- Local GUI application with:
+  - price chart
+  - buy/sell strength chart
+  - imbalance markers drawn on the chart
+  - current metrics and latest setup summary
 - Feature calculations for:
   - normalized buy/sell strength
   - rolling trade-flow aggregation
@@ -17,6 +30,10 @@ This first version is designed to help monitor BTC, ETH, and SOL without placing
   - L2 book imbalance
   - market response
   - blocked-buying and blocked-selling prototype scores
+- Time-aligned candle feature series for charting:
+  - per-candle buy strength
+  - per-candle sell strength
+  - per-candle blocked-buying / blocked-selling flags
 - Configurable bearish price-action detector
 - Composite monitor script that fetches data, computes features, detects setups, stores outputs, and can send alerts
 - Example scripts for REST fetches and WebSocket subscriptions
@@ -62,6 +79,12 @@ Run the backend monitor loop:
 python -m scripts.run_monitor --symbols BTC/USD ETH/USD SOL/USD --iterations 1
 ```
 
+Launch the GUI application:
+
+```bash
+python -m scripts.run_gui
+```
+
 ## Alerts
 
 Alerts are modular and optional.
@@ -93,9 +116,10 @@ pytest
 
 - No historical backfill batching beyond simple recent REST pulls
 - WebSocket handling is intentionally simple and does not maintain a full local L2 book state
+- The GUI refreshes from REST snapshots and uses recent trades to build per-candle strength overlays
 - Bearish setup detection is a first-pass explicit rules engine, not a complete discretionary chart model
 - Alert deduplication is minimal
-- The monitor primarily uses REST snapshots for end-to-end operation; WebSocket examples are provided separately for live streaming research
+- The monitor and GUI primarily use REST snapshots for end-to-end operation; WebSocket examples are provided separately for live streaming research
 
 ## Suggested Next Steps
 

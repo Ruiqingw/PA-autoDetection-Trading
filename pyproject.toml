@@ -5,12 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "crypto-trading-assistant"
 version = "0.1.0"
-description = "Backend-only discretionary crypto trading assistant using Kraken public market data."
+description = "Discretionary crypto trading assistant with backend monitoring and a local GUI using Kraken public market data."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "aiohttp>=3.11,<4",
   "httpx>=0.28,<1",
+  "matplotlib>=3.8,<4",
 ]
 
 [project.optional-dependencies]
@@ -19,7 +20,7 @@ dev = [
 ]
 
 [tool.setuptools]
-packages = ["alerts", "config", "data", "features", "scripts", "signals", "storage"]
+packages = ["alerts", "config", "data", "features", "scripts", "services", "signals", "storage", "ui"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

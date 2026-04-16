@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from datetime import datetime
+from decimal import Decimal
 import json
 from pathlib import Path
 import sqlite3
@@ -172,6 +173,34 @@ class SQLiteStore:
                     for trade in trades
                 ],
             )
+
+    def load_trades(self, symbol: str, *, start_time: datetime, end_time: datetime) -> list[Trade]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT symbol, timestamp, price, volume, side, order_type, trade_id, source
+                FROM trades
+                WHERE symbol = ?
+                  AND timestamp >= ?
+                  AND timestamp < ?
+                ORDER BY timestamp ASC
+                """,
+                (symbol, start_time.isoformat(), end_time.isoformat()),
+            ).fetchall()
+
+        return [
+            Trade(
+                symbol=row[0],
+                timestamp=datetime.fromisoformat(row[1]),
+                price=Decimal(str(row[2])),
+                volume=Decimal(str(row[3])),
+                side=row[4],
+                order_type=row[5],
+                trade_id=row[6],
+                source=row[7],
+            )
+            for row in rows
+        ]
 
     def insert_book_snapshot(self, snapshot: BookSnapshot) -> None:
         top_of_book = to_top_of_book(snapshot)

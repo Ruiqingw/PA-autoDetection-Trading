@@ -9,57 +9,17 @@ import logging
 import time
 
 from alerts.base import AlertManager
-from alerts.email import EmailAlertSink
-from alerts.formatter import format_signal_alert
-from alerts.telegram import TelegramAlertSink
 from config.settings import Settings
-from data.kraken_rest import KrakenRestClient
-from signals.composite import analyze_market_state
+from services.monitor import build_alert_manager, collect_market_bundles
 from storage.sqlite_store import SQLiteStore
 
 
 LOGGER = logging.getLogger(__name__)
 
 
-def build_alert_manager(settings: Settings) -> AlertManager:
-    sinks = []
-    if settings.telegram.enabled:
-        sinks.append(TelegramAlertSink(settings.telegram))
-    if settings.email.enabled:
-        sinks.append(EmailAlertSink(settings.email))
-    return AlertManager(sinks)
-
-
 def run_iteration(settings: Settings, store: SQLiteStore, alert_manager: AlertManager) -> list[dict[str, object]]:
-    outputs: list[dict[str, object]] = []
-    with KrakenRestClient(settings.rest) as client:
-        pairs = client.get_asset_pairs()
-        store.upsert_asset_pairs(pairs)
-        for symbol in settings.monitor.symbols:
-            trades = client.get_trades(symbol, limit=settings.rest.trade_limit)
-            book = client.get_depth(symbol, count=settings.rest.depth_levels)
-            store.insert_trades(trades)
-            store.insert_book_snapshot(book)
-            for interval in settings.monitor.intervals:
-                candles = client.get_ohlc(symbol, interval)
-                if len(candles) < 2:
-                    continue
-                store.upsert_candles(candles)
-                snapshot = analyze_market_state(
-                    symbol=symbol,
-                    timeframe=f"{interval}m",
-                    candles=candles,
-                    trades=trades,
-                    book_snapshot=book,
-                    settings=settings,
-                )
-                payload = snapshot.as_dict()
-                outputs.append(payload)
-                if snapshot.signal:
-                    if settings.monitor.persist_signals:
-                        store.insert_signal(snapshot.signal)
-                    alert_manager.send(format_signal_alert(snapshot.signal))
-    return outputs
+    bundles = collect_market_bundles(settings, store, alert_manager)
+    return [bundle.as_dict() for bundle in bundles]
 
 
 def main() -> None:

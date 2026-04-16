@@ -8,7 +8,19 @@ import os
 
 
 DEFAULT_SYMBOLS = ["BTC/USD", "ETH/USD", "SOL/USD"]
-DEFAULT_INTERVALS = [60, 240]
+DEFAULT_INTERVALS = [1, 5, 15, 60, 240, 1440]
+
+
+def format_timeframe_label(interval_minutes: int) -> str:
+    """Convert Kraken interval minutes into a user-facing label."""
+
+    if interval_minutes < 60:
+        return f"{interval_minutes}m"
+    if interval_minutes < 1440 and interval_minutes % 60 == 0:
+        return f"{interval_minutes // 60}h"
+    if interval_minutes == 1440:
+        return "1d"
+    return f"{interval_minutes}m"
 
 
 @dataclass(slots=True)
@@ -21,7 +33,7 @@ class RestSettings:
     base_url: str = "https://api.kraken.com/0/public"
     timeout_seconds: float = 10.0
     ohlc_limit: int = 200
-    trade_limit: int = 250
+    trade_limit: int = 1000
     depth_levels: int = 10
 
 
@@ -39,6 +51,11 @@ class FeatureSettings:
     response_scale_bps: float = 25.0
     min_flow_for_response: float = 0.05
     book_depth_levels: int = 5
+    footprint_levels_per_candle: int = 6
+    footprint_min_price_increment: float = 0.01
+    imbalance_strength_threshold: float = 0.60
+    imbalance_blocked_threshold: float = 0.55
+    imbalance_min_trade_count: int = 5
 
 
 @dataclass(slots=True)

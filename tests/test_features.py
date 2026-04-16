@@ -4,7 +4,13 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 from data.models import BookLevel, BookSnapshot, TopOfBookQuote, Trade
-from features.orderflow import aggregate_trade_flow, compute_book_imbalance, compute_top_of_book_spread
+from features.orderflow import (
+    aggregate_trade_flow,
+    compute_bid_ask_indicator,
+    compute_book_imbalance,
+    compute_delta_indicator,
+    compute_top_of_book_spread,
+)
 from features.response import (
     compute_blocked_buying_score,
     compute_blocked_selling_score,
@@ -39,6 +45,24 @@ def test_aggregate_trade_flow() -> None:
     assert flow.normalized_delta == 0.0
 
 
+def test_delta_indicator() -> None:
+    trades = [
+        _trade("buy", "100", "5", 0),
+        _trade("sell", "99", "2", 10),
+        _trade("buy", "101", "1", 20),
+    ]
+
+    indicator = compute_delta_indicator(trades)
+
+    assert indicator.trade_count == 3
+    assert indicator.buy_volume == Decimal("6")
+    assert indicator.sell_volume == Decimal("2")
+    assert indicator.raw_delta == Decimal("4")
+    assert indicator.normalized_delta == 0.5
+    assert indicator.buy_ratio == 0.75
+    assert indicator.sell_ratio == 0.25
+
+
 def test_book_imbalance_and_spread() -> None:
     snapshot = BookSnapshot(
         symbol="BTC/USD",
@@ -62,6 +86,28 @@ def test_book_imbalance_and_spread() -> None:
     assert spread is not None
     assert spread.spread == Decimal("1")
     assert round(spread.spread_bps, 4) == 99.5025
+
+
+def test_bid_ask_indicator() -> None:
+    snapshot = BookSnapshot(
+        symbol="BTC/USD",
+        timestamp=datetime(2024, 1, 1, tzinfo=UTC),
+        bids=[BookLevel(price=Decimal("100"), volume=Decimal("5")), BookLevel(price=Decimal("99"), volume=Decimal("3"))],
+        asks=[BookLevel(price=Decimal("101"), volume=Decimal("2")), BookLevel(price=Decimal("102"), volume=Decimal("2"))],
+    )
+
+    indicator = compute_bid_ask_indicator(snapshot, depth_levels=2)
+
+    assert indicator is not None
+    assert indicator.best_bid_price == Decimal("100")
+    assert indicator.best_ask_price == Decimal("101")
+    assert indicator.best_bid_volume == Decimal("5")
+    assert indicator.best_ask_volume == Decimal("2")
+    assert indicator.spread == Decimal("1")
+    assert round(indicator.spread_bps, 4) == 99.5025
+    assert round(indicator.top_of_book_imbalance, 4) == 0.4286
+    assert round(indicator.depth_imbalance, 4) == 0.3333
+    assert indicator.bid_ask_volume_ratio == 2.5
 
 
 def test_market_response_and_blocked_scores() -> None:
