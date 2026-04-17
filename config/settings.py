@@ -56,6 +56,11 @@ class FeatureSettings:
     imbalance_strength_threshold: float = 0.60
     imbalance_blocked_threshold: float = 0.55
     imbalance_min_trade_count: int = 5
+    fvg_min_gap_ratio: float = 0.0005
+    ob_displacement_ratio: float = 0.003
+    ob_lookahead_candles: int = 3
+    ob_lookback_candles: int = 3
+    structure_zone_limit: int = 8
 
 
 @dataclass(slots=True)

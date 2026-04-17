@@ -13,6 +13,7 @@ from config.settings import Settings, format_timeframe_label
 from data.kraken_rest import KrakenRestClient
 from data.models import BookSnapshot, Candle, Trade
 from features.footprint import CandleFootprint, compute_candle_footprints
+from features.structure import StructureZone, detect_structure_zones
 from features.timeseries import CandleFeaturePoint, FlowPriceImbalance, compute_candle_feature_series, extract_imbalance_markers
 from signals.composite import MonitorSnapshot, analyze_market_state
 from storage.sqlite_store import SQLiteStore
@@ -29,6 +30,7 @@ class MonitorBundle:
     candle_feature_series: list[CandleFeaturePoint]
     candle_footprints: list[CandleFootprint]
     imbalance_markers: list[FlowPriceImbalance]
+    structure_zones: list[StructureZone]
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -60,6 +62,7 @@ class MonitorBundle:
                 for footprint in self.candle_footprints
             ],
             "imbalance_markers": [marker.as_dict() for marker in self.imbalance_markers],
+            "structure_zones": [zone.as_dict() for zone in self.structure_zones],
         }
 
 
@@ -143,6 +146,7 @@ def collect_market_bundles(
                     levels_per_candle=settings.features.footprint_levels_per_candle,
                     min_price_increment=Decimal(str(settings.features.footprint_min_price_increment)),
                 )
+                structure_zones = detect_structure_zones(candles, settings.features)
                 bundles.append(
                     MonitorBundle(
                         symbol=symbol,
@@ -154,6 +158,7 @@ def collect_market_bundles(
                         candle_feature_series=series,
                         candle_footprints=footprints,
                         imbalance_markers=extract_imbalance_markers(series),
+                        structure_zones=structure_zones,
                     )
                 )
     return bundles

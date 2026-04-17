@@ -11,6 +11,8 @@ from services.monitor import MonitorBundle
 INDICATOR_OPTIONS: tuple[tuple[str, str], ...] = (
     ("delta", "Delta"),
     ("bid_ask", "Bid / Ask"),
+    ("order_block", "Order Block"),
+    ("fvg", "FVG"),
 )
 
 
@@ -118,6 +120,7 @@ def _serialize_bundle(bundle: MonitorBundle) -> dict[str, object]:
             for footprint in bundle.candle_footprints
         ],
         "imbalance_markers": [marker.as_dict() for marker in bundle.imbalance_markers],
+        "structure_zones": [zone.as_dict() for zone in bundle.structure_zones],
         "watchlist_entry": _serialize_watchlist_entry(bundle),
     }
 

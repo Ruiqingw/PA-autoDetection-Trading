@@ -7,6 +7,7 @@ from config.settings import Settings
 from data.models import BookLevel, BookSnapshot, Candle, Trade
 from features.orderflow import BidAskIndicator, DeltaIndicator, TradeFlowSnapshot
 from features.response import MarketResponseMetrics
+from features.structure import StructureZone
 from features.timeseries import CandleFeaturePoint
 from services.monitor import MonitorBundle
 from signals.composite import MonitorSnapshot
@@ -118,6 +119,18 @@ def test_build_dashboard_payload_includes_bundle_and_watchlist() -> None:
         ],
         candle_footprints=[],
         imbalance_markers=[],
+        structure_zones=[
+            StructureZone(
+                kind="fvg",
+                side="bullish",
+                start_time=candles[0].open_time.isoformat(),
+                end_time=candles[-1].close_time.isoformat(),
+                lower_price=99.0,
+                upper_price=100.0,
+                label="FVG",
+                mitigated=False,
+            )
+        ],
     )
 
     payload = build_dashboard_payload([bundle], Settings.from_env(), selected_symbol="BTC/USD", selected_interval=5)
@@ -127,3 +140,5 @@ def test_build_dashboard_payload_includes_bundle_and_watchlist() -> None:
     assert payload["watchlist"][0]["display_symbol"] == "BTCUSD"
     assert payload["bundles"]["BTC/USD"]["interval_label"] == "5m"
     assert len(payload["bundles"]["BTC/USD"]["candles"]) == 2
+    assert payload["bundles"]["BTC/USD"]["structure_zones"][0]["kind"] == "fvg"
+    assert {option["key"] for option in payload["indicator_options"]} >= {"delta", "bid_ask", "order_block", "fvg"}

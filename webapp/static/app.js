@@ -13,6 +13,7 @@ const COLORS = {
   ema238: "#f2c94c",
   ema338: "#4caf50",
   border: "#8ea08b",
+  structureOverlay: "#b77be3",
 };
 
 const state = {
@@ -98,6 +99,45 @@ function formatCrosshairTime(isoString) {
   return `${year}-${month}-${day} ${hours}:${minutes}`;
 }
 
+function niceStep(rawStep) {
+  if (!Number.isFinite(rawStep) || rawStep <= 0) return 1;
+  const exponent = Math.floor(Math.log10(rawStep));
+  const fraction = rawStep / 10 ** exponent;
+  let niceFraction = 1;
+  if (fraction <= 1) niceFraction = 1;
+  else if (fraction <= 2) niceFraction = 2;
+  else if (fraction <= 2.5) niceFraction = 2.5;
+  else if (fraction <= 5) niceFraction = 5;
+  else niceFraction = 10;
+  return niceFraction * 10 ** exponent;
+}
+
+function decimalsForStep(step) {
+  if (!Number.isFinite(step) || step <= 0) return 2;
+  if (step >= 1000) return 0;
+  if (step >= 1) return Math.max(0, Math.min(2, Math.ceil(-Math.log10(step * 0.1))));
+  return Math.max(2, Math.min(6, Math.ceil(-Math.log10(step)) + 1));
+}
+
+function formatAxisPrice(value, step) {
+  const decimals = decimalsForStep(step);
+  return Number(value).toLocaleString("en-US", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+}
+
+function buildYAxisTicks(scaleTop, scaleBottom, targetCount = 6) {
+  const range = Math.max(scaleTop - scaleBottom, 0.0000001);
+  const step = niceStep(range / Math.max(targetCount, 2));
+  const ticks = [];
+  const firstTick = Math.ceil(scaleBottom / step) * step;
+  for (let value = firstTick; value <= scaleTop + step * 0.5; value += step) {
+    ticks.push(Number(value.toFixed(10)));
+  }
+  return { step, ticks };
+}
+
 function ema(values, span) {
   if (!values.length) return [];
   const alpha = 2 / (span + 1);
@@ -162,6 +202,9 @@ function latestSummary(bundle, index = null) {
   };
 }
 
+const PANE_INDICATORS = new Set(["delta", "bid_ask"]);
+const OVERLAY_INDICATORS = new Set(["order_block", "fvg"]);
+
 class TradingWebChart {
   constructor(canvas, { onHover, onLeave }) {
     this.canvas = canvas;
@@ -187,7 +230,13 @@ class TradingWebChart {
       footprint: null,
     };
     this.dragStartX = null;
+    this.dragStartY = null;
     this.dragStartViewLeft = null;
+    this.dragStartYCenter = null;
+    this.dragStartYRange = null;
+    this.yAxisDragging = false;
+    this.manualYCenter = null;
+    this.manualYRange = null;
     this.resizingDivider = false;
     this.hoverIndex = null;
     this.hoverX = null;
@@ -207,12 +256,17 @@ class TradingWebChart {
     window.addEventListener("mousemove", (event) => this.handleMouseMove(event));
     window.addEventListener("mouseup", () => this.handleMouseUp());
     this.canvas.addEventListener("mouseleave", () => this.handleMouseLeave());
+    this.canvas.addEventListener("dblclick", (event) => this.handleDoubleClick(event));
     this.canvas.addEventListener(
       "wheel",
       (event) => {
         event.preventDefault();
         const factor = event.deltaY < 0 ? 0.95 : 1.05;
-        this.zoomAt(event.offsetX, factor);
+        if (this.priceAxisContains(event.offsetX, event.offsetY)) {
+          this.zoomYAxisAt(event.offsetY, factor);
+        } else {
+          this.zoomAt(event.offsetX, factor);
+        }
       },
       { passive: false },
     );
@@ -226,6 +280,7 @@ class TradingWebChart {
     this.canvas.width = Math.round(this.logicalWidth * dpr);
     this.canvas.height = Math.round(this.logicalHeight * dpr);
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.updateCursor();
     this.requestDraw();
   }
 
@@ -242,6 +297,8 @@ class TradingWebChart {
     this.hoverIndex = null;
     this.hoverX = null;
     this.hoverY = null;
+    this.manualYCenter = null;
+    this.manualYRange = null;
     this.resetView();
     this.modeViews.candles = { viewLeft: this.viewLeft, viewCount: this.viewCount };
     this.modeViews.footprint = null;
@@ -261,13 +318,21 @@ class TradingWebChart {
   setSelectedIndicators(indicators) {
     const previous = new Set(this.selectedIndicators);
     this.selectedIndicators = [...new Set(indicators)];
-    if (this.selectedIndicators.length) {
+    if (this.paneIndicators().length) {
       this.indicatorAreaHeight = Math.max(this.indicatorAreaHeight, 120);
     }
     if (this.selectedIndicators.includes("delta") && !previous.has("delta")) {
       this.focusTradeCoverage();
     }
     this.requestDraw();
+  }
+
+  paneIndicators() {
+    return this.selectedIndicators.filter((indicator) => PANE_INDICATORS.has(indicator));
+  }
+
+  overlayIndicators() {
+    return this.selectedIndicators.filter((indicator) => OVERLAY_INDICATORS.has(indicator));
   }
 
   focusTradeCoverage() {
@@ -335,9 +400,10 @@ class TradingWebChart {
     const right = width - 92;
     const top = 24;
     const bottom = height - 26;
-    const indicatorHeight = this.selectedIndicators.length ? Math.min(this.indicatorAreaHeight, height * 0.5) : 0;
+    const indicatorHeight = this.paneIndicators().length ? Math.min(this.indicatorAreaHeight, height * 0.5) : 0;
     const indicatorTop = indicatorHeight ? bottom - indicatorHeight : bottom;
-    return { width, height, left, right, top, bottom, indicatorTop };
+    const priceBottom = this.paneIndicators().length ? indicatorTop - 10 : bottom;
+    return { width, height, left, right, top, bottom, indicatorTop, priceBottom };
   }
 
   candleSpace() {
@@ -385,14 +451,31 @@ class TradingWebChart {
   }
 
   plotContains(x, y) {
-    const { left, right, top, bottom } = this.plotGeometry();
-    return left <= x && x <= right && top <= y && y <= bottom;
+    const { left, right, top, priceBottom } = this.plotGeometry();
+    return left <= x && x <= right && top <= y && y <= priceBottom;
+  }
+
+  priceAxisContains(x, y) {
+    const { right, width, top, priceBottom } = this.plotGeometry();
+    return right < x && x <= width && top <= y && y <= priceBottom;
   }
 
   dividerHit(y) {
-    if (!this.selectedIndicators.length) return false;
+    if (!this.paneIndicators().length) return false;
     const { indicatorTop } = this.plotGeometry();
     return Math.abs(y - indicatorTop) <= 6;
+  }
+
+  updateCursor(x = this.hoverX, y = this.hoverY) {
+    let cursor = "default";
+    if (this.resizingDivider) cursor = "row-resize";
+    else if (this.yAxisDragging) cursor = "ns-resize";
+    else if (x !== null && y !== null) {
+      if (this.priceAxisContains(x, y)) cursor = "ns-resize";
+      else if (this.dividerHit(y)) cursor = "row-resize";
+      else if (this.plotContains(x, y)) cursor = "crosshair";
+    }
+    this.canvas.style.cursor = cursor;
   }
 
   requestDraw() {
@@ -411,12 +494,34 @@ class TradingWebChart {
     if (this.dividerHit(y)) {
       this.resizingDivider = true;
       this.clearHover(true);
+      this.updateCursor(x, y);
+      this.requestDraw();
+      return;
+    }
+    if (this.priceAxisContains(x, y)) {
+      const activeScale = this.currentYScale();
+      this.yAxisDragging = true;
+      this.dragStartY = y;
+      this.dragStartYCenter = activeScale.center;
+      this.dragStartYRange = activeScale.range;
+      this.clearHover(true);
+      this.updateCursor(x, y);
       this.requestDraw();
       return;
     }
     this.dragStartX = x;
+    this.dragStartY = y;
     this.dragStartViewLeft = this.viewLeft;
+    if (this.manualYRange !== null && this.manualYCenter !== null) {
+      this.dragStartYCenter = this.manualYCenter;
+      this.dragStartYRange = this.manualYRange;
+    } else {
+      const activeScale = this.currentYScale();
+      this.dragStartYCenter = activeScale.center;
+      this.dragStartYRange = activeScale.range;
+    }
     this.clearHover(true);
+    this.updateCursor(x, y);
     this.requestDraw();
   }
 
@@ -430,30 +535,58 @@ class TradingWebChart {
       const minHeight = 90;
       const maxHeight = Math.max(Math.min(height * 0.5, height - top - 80), minHeight);
       this.indicatorAreaHeight = Math.max(minHeight, Math.min(maxHeight, bottom - y));
+      this.updateCursor(x, y);
+      this.requestDraw();
+      return;
+    }
+    if (this.yAxisDragging && this.dragStartY !== null && this.dragStartYRange !== null) {
+      const deltaPixels = y - this.dragStartY;
+      const factor = Math.exp(deltaPixels / 180);
+      const autoScale = this.computeAutoScale();
+      const minRange = Math.max(autoScale.range * 0.12, 0.0001);
+      const maxRange = autoScale.range * 8;
+      this.manualYRange = Math.max(minRange, Math.min(maxRange, this.dragStartYRange * factor));
+      this.manualYCenter = this.dragStartYCenter ?? autoScale.center;
+      this.updateCursor(x, y);
       this.requestDraw();
       return;
     }
     if (this.dragStartX !== null && this.dragStartViewLeft !== null) {
       const deltaPixels = x - this.dragStartX;
       this.viewLeft = this.clampViewLeft(this.dragStartViewLeft - deltaPixels / this.candleSpace());
+      if (this.manualYRange !== null && this.dragStartY !== null && this.dragStartYCenter !== null && this.dragStartYRange !== null) {
+        const { top, priceBottom } = this.plotGeometry();
+        const usableHeight = Math.max(priceBottom - top - 12, 1);
+        const deltaY = y - this.dragStartY;
+        const centerShift = (deltaY / usableHeight) * this.dragStartYRange;
+        this.manualYCenter = this.dragStartYCenter + centerShift;
+      }
+      this.updateCursor(x, y);
       this.requestDraw();
       return;
     }
     this.updateHover(x, y);
+    this.updateCursor(x, y);
   }
 
   handleMouseUp() {
-    if (this.dragStartX !== null || this.resizingDivider) {
+    if (this.dragStartX !== null || this.resizingDivider || this.yAxisDragging) {
       this.storeViewForMode(this.displayMode);
     }
+    this.yAxisDragging = false;
     this.resizingDivider = false;
     this.dragStartX = null;
+    this.dragStartY = null;
     this.dragStartViewLeft = null;
+    this.dragStartYCenter = null;
+    this.dragStartYRange = null;
+    this.updateCursor();
   }
 
   handleMouseLeave() {
     this.clearHover(false);
     if (this.onLeave) this.onLeave();
+    this.updateCursor(null, null);
     this.requestDraw();
   }
 
@@ -495,6 +628,100 @@ class TradingWebChart {
     this.viewCount = newCount;
     this.storeViewForMode(this.displayMode);
     this.requestDraw();
+  }
+
+  computeAutoScale() {
+    if (!this.bundle) {
+      return {
+        top: 1,
+        bottom: 0,
+        range: 1,
+        center: 0.5,
+      };
+    }
+    const actualVisible = this.actualVisibleIndices();
+    if (!actualVisible.length) {
+      return {
+        top: 1,
+        bottom: 0,
+        range: 1,
+        center: 0.5,
+      };
+    }
+    const highs = actualVisible.map((index) => Number(this.bundle.candles[index].high));
+    const lows = actualVisible.map((index) => Number(this.bundle.candles[index].low));
+    const emaVisible = [
+      this.ema12,
+      this.ema144,
+      this.ema169,
+      this.ema238,
+      this.ema338,
+    ]
+      .flatMap((series) => actualVisible.map((index) => series[index]))
+      .filter((value) => Number.isFinite(value));
+    const minPrice = Math.min(...lows, ...emaVisible);
+    const maxPrice = Math.max(...highs, ...emaVisible);
+    const priceRange = Math.max(maxPrice - minPrice, 1);
+    const yPadTop = priceRange * 0.14;
+    const yPadBottom = priceRange * 0.18;
+    const top = maxPrice + yPadTop;
+    const bottom = minPrice - yPadBottom;
+    const range = Math.max(top - bottom, 0.0001);
+    return {
+      top,
+      bottom,
+      range,
+      center: (top + bottom) / 2,
+    };
+  }
+
+  currentYScale() {
+    const autoScale = this.computeAutoScale();
+    if (this.manualYCenter === null || this.manualYRange === null) {
+      return autoScale;
+    }
+    const range = Math.max(this.manualYRange, 0.0001);
+    const center = this.manualYCenter;
+    return {
+      top: center + range / 2,
+      bottom: center - range / 2,
+      range,
+      center,
+    };
+  }
+
+  zoomYAxisAt(y, factor) {
+    if (!this.bundle) return;
+    const { top, priceBottom } = this.plotGeometry();
+    const usableHeight = Math.max(priceBottom - top - 12, 1);
+    const clampedY = Math.max(top + 12, Math.min(priceBottom, y));
+    const normalized = (clampedY - (top + 12)) / usableHeight;
+    const scale = this.currentYScale();
+    const anchorPrice = scale.top - normalized * scale.range;
+    const autoScale = this.computeAutoScale();
+    const minRange = Math.max(autoScale.range * 0.12, 0.0001);
+    const maxRange = autoScale.range * 8;
+    const nextRange = Math.max(minRange, Math.min(maxRange, scale.range * factor));
+    const center = anchorPrice - nextRange * (0.5 - normalized);
+    this.manualYRange = nextRange;
+    this.manualYCenter = center;
+    this.requestDraw();
+  }
+
+  resetYAxisScale() {
+    this.manualYCenter = null;
+    this.manualYRange = null;
+    this.requestDraw();
+  }
+
+  handleDoubleClick(event) {
+    if (!this.bundle) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    if (this.plotContains(x, y) || this.priceAxisContains(x, y)) {
+      this.resetYAxisScale();
+    }
   }
 
   drawTextBox(ctx, x, y, text, { anchor = "w", fill = COLORS.text, bg = "#ffffff", outline = "", font = "10px Helvetica", padX = 8, padY = 4 }) {
@@ -749,8 +976,54 @@ class TradingWebChart {
     ctx.restore();
   }
 
+  drawStructureZones(ctx, visible, yPrice, bodyWidth, priceBottom) {
+    if (![60, 240, 1440].includes(this.bundle.interval_minutes)) return;
+    const activeKinds = new Set(this.overlayIndicators());
+    if (!activeKinds.size) return;
+
+    const openIndex = new Map(this.bundle.candles.map((candle, index) => [candle.open_time, index]));
+    const closeIndex = new Map(this.bundle.candles.map((candle, index) => [candle.close_time, index]));
+
+    this.bundle.structure_zones
+      .filter((zone) => activeKinds.has(zone.kind) && !(zone.kind === "fvg" && zone.mitigated))
+      .forEach((zone) => {
+        const startIndex = openIndex.get(zone.start_time);
+        const endIndex = closeIndex.get(zone.end_time) ?? this.bundle.candles.length - 1;
+        if (startIndex === undefined) return;
+        if (endIndex < visible[0] || startIndex > visible[visible.length - 1]) return;
+
+        const clampedStart = Math.max(startIndex, visible[0]);
+        const clampedEnd = Math.min(endIndex, visible[visible.length - 1]);
+        const leftX = this.xFromIndex(clampedStart) - bodyWidth * 0.9;
+        const rightX = this.xFromIndex(clampedEnd) + bodyWidth * 0.9;
+        const zoneTop = Math.max(24, yPrice(zone.upper_price));
+        const zoneBottom = Math.min(priceBottom - 2, yPrice(zone.lower_price));
+        const zoneHeight = Math.max(zoneBottom - zoneTop, 3);
+        const labelY = Math.max(zoneTop + 11, Math.min(zoneBottom - 6, zoneTop + 14));
+
+        ctx.save();
+        ctx.fillStyle = COLORS.structureOverlay;
+        ctx.globalAlpha = zone.kind === "fvg" ? 0.11 : 0.15;
+        ctx.fillRect(leftX, zoneTop, Math.max(rightX - leftX, 4), zoneHeight);
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = COLORS.structureOverlay;
+        ctx.lineWidth = zone.kind === "fvg" ? 1.2 : 1.6;
+        if (zone.kind === "fvg") ctx.setLineDash([6, 4]);
+        ctx.strokeRect(leftX + 0.5, zoneTop + 0.5, Math.max(rightX - leftX - 1, 3), Math.max(zoneHeight - 1, 2));
+        ctx.setLineDash([]);
+        ctx.fillStyle = COLORS.structureOverlay;
+        ctx.font = "bold 10px Helvetica";
+        ctx.textAlign = "left";
+        ctx.fillText(zone.label, leftX + 6, labelY);
+        ctx.font = "9px Helvetica";
+        ctx.fillText(zone.side === "bullish" ? "B" : "S", leftX + 28, labelY);
+        ctx.restore();
+      });
+  }
+
   drawIndicatorPanes(ctx, indices, left, right, indicatorTop, bottom, bodyWidth, width) {
-    if (!this.selectedIndicators.length) return;
+    const paneIndicators = this.paneIndicators();
+    if (!paneIndicators.length) return;
     ctx.save();
     ctx.fillStyle = COLORS.bgIndicator;
     ctx.fillRect(0, indicatorTop, width, bottom + 8 - indicatorTop);
@@ -759,8 +1032,8 @@ class TradingWebChart {
     ctx.moveTo(0, indicatorTop + 0.5);
     ctx.lineTo(width, indicatorTop + 0.5);
     ctx.stroke();
-    const paneHeight = (bottom - indicatorTop) / this.selectedIndicators.length;
-    this.selectedIndicators.forEach((indicatorName, paneIndex) => {
+    const paneHeight = (bottom - indicatorTop) / paneIndicators.length;
+    paneIndicators.forEach((indicatorName, paneIndex) => {
       const paneTop = indicatorTop + paneIndex * paneHeight;
       const paneBottom = indicatorTop + (paneIndex + 1) * paneHeight;
       if (paneIndex > 0) {
@@ -778,10 +1051,9 @@ class TradingWebChart {
 
   redraw() {
     const ctx = this.ctx;
-    const { width, height, left, right, top, bottom, indicatorTop } = this.plotGeometry();
+    const { width, height, left, right, top, bottom, indicatorTop, priceBottom } = this.plotGeometry();
     ctx.clearRect(0, 0, width, height);
     if (!this.bundle || !this.bundle.candles.length) return;
-    const priceBottom = this.selectedIndicators.length ? indicatorTop - 10 : bottom;
 
     ctx.fillStyle = COLORS.bgPrice;
     ctx.fillRect(0, 0, width, priceBottom);
@@ -789,25 +1061,10 @@ class TradingWebChart {
     const visible = this.visibleIndices();
     const actualVisible = this.actualVisibleIndices();
     if (!actualVisible.length) return;
-    const highs = actualVisible.map((index) => Number(this.bundle.candles[index].high));
-    const lows = actualVisible.map((index) => Number(this.bundle.candles[index].low));
-    const emaVisible = [
-      this.ema12,
-      this.ema144,
-      this.ema169,
-      this.ema238,
-      this.ema338,
-    ]
-      .flatMap((series) => actualVisible.map((index) => series[index]))
-      .filter((value) => Number.isFinite(value));
-    const minPrice = Math.min(...lows, ...emaVisible);
-    const maxPrice = Math.max(...highs, ...emaVisible);
-    const priceRange = Math.max(maxPrice - minPrice, 1);
-    const yPadTop = priceRange * 0.14;
-    const yPadBottom = priceRange * 0.18;
-    const scaleTop = maxPrice + yPadTop;
-    const scaleBottom = minPrice - yPadBottom;
-    const scaleRange = Math.max(scaleTop - scaleBottom, 1);
+    const activeScale = this.currentYScale();
+    const scaleTop = activeScale.top;
+    const scaleBottom = activeScale.bottom;
+    const scaleRange = activeScale.range;
     const volumeHeight = 90;
     const yPrice = (value) => {
       const usableHeight = priceBottom - top - 12;
@@ -825,6 +1082,11 @@ class TradingWebChart {
     const maxVolume = this.displayMode === "footprint"
       ? Math.max(...this.footprints.map((item) => Number(item?.total_volume ?? 0)), 1)
       : Math.max(...this.bundle.candles.map((candle) => Number(candle.volume)), 1);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, width, priceBottom);
+    ctx.clip();
 
     const supportLevel = this.bundle.analysis.signal ? Number(this.bundle.analysis.signal.support_level) : null;
     if (supportLevel !== null) {
@@ -846,6 +1108,7 @@ class TradingWebChart {
     ctx.fillText(`${this.bundle.symbol.replace("/", "")}, ${this.bundle.interval_label}`, (left + right) / 2, top + (priceBottom - top) * 0.52);
     ctx.restore();
 
+    this.drawStructureZones(ctx, visible, yPrice, bodyWidth, priceBottom);
     if (this.displayMode === "footprint") {
       this.drawFootprints(ctx, visible, yPrice, bodyWidth, priceBottom, maxVolume, volumeHeight);
     } else {
@@ -858,14 +1121,24 @@ class TradingWebChart {
     this.drawLineSeries(ctx, visible, this.ema238, yPrice, COLORS.ema238, 2);
     this.drawLineSeries(ctx, visible, this.ema338, yPrice, COLORS.ema338, 2);
 
+    ctx.restore();
+
+    const yAxisTicks = buildYAxisTicks(scaleTop, scaleBottom, 6);
     ctx.save();
     ctx.fillStyle = COLORS.textDim;
     ctx.font = "10px Helvetica";
     ctx.textAlign = "right";
-    for (let step = 0; step < 6; step += 1) {
-      const value = scaleTop - (scaleRange / 5) * step;
-      ctx.fillText(Math.round(value).toLocaleString("en-US"), width - 12, yPrice(value) + 4);
-    }
+    yAxisTicks.ticks.forEach((value) => {
+      const yTick = yPrice(value);
+      ctx.strokeStyle = "#c4d1bf";
+      ctx.globalAlpha = 0.5;
+      ctx.beginPath();
+      ctx.moveTo(left, yTick);
+      ctx.lineTo(right, yTick);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.fillText(formatAxisPrice(value, yAxisTicks.step), width - 12, yTick + 4);
+    });
     ctx.restore();
 
     const currentClose = Number(this.bundle.candles[this.bundle.candles.length - 1].close);
@@ -893,36 +1166,38 @@ class TradingWebChart {
     const lowX = this.xFromIndex(lowIndex);
     const highY = yPrice(highValue);
     const lowY = yPrice(lowValue);
+    const highLabelY = Math.max(top + 20, highY - 28);
+    const lowLabelY = Math.min(priceBottom - 14, lowY + 28);
 
     ctx.save();
     ctx.strokeStyle = "#4d545c";
     ctx.beginPath();
     ctx.moveTo(highX, highY - 2);
-    ctx.lineTo(highX, highY - 20);
+    ctx.lineTo(highX, Math.max(top + 8, highLabelY - 8));
     ctx.stroke();
     ctx.beginPath();
-    ctx.moveTo(highX - 4, highY - 14);
-    ctx.lineTo(highX, highY - 20);
-    ctx.lineTo(highX + 4, highY - 14);
+    ctx.moveTo(highX - 4, Math.max(top + 12, highLabelY - 14));
+    ctx.lineTo(highX, Math.max(top + 8, highLabelY - 8));
+    ctx.lineTo(highX + 4, Math.max(top + 12, highLabelY - 14));
     ctx.stroke();
     ctx.beginPath();
     ctx.moveTo(lowX, lowY + 2);
-    ctx.lineTo(lowX, lowY + 20);
+    ctx.lineTo(lowX, Math.min(priceBottom - 8, lowLabelY - 8));
     ctx.stroke();
     ctx.beginPath();
-    ctx.moveTo(lowX - 4, lowY + 14);
-    ctx.lineTo(lowX, lowY + 20);
-    ctx.lineTo(lowX + 4, lowY + 14);
+    ctx.moveTo(lowX - 4, Math.min(priceBottom - 12, lowLabelY - 14));
+    ctx.lineTo(lowX, Math.min(priceBottom - 8, lowLabelY - 8));
+    ctx.lineTo(lowX + 4, Math.min(priceBottom - 12, lowLabelY - 14));
     ctx.stroke();
     ctx.restore();
-    this.drawTextBox(ctx, highX, highY - 28, `High  ${formatPrice(highValue)}`, {
+    this.drawTextBox(ctx, highX, highLabelY, `High  ${formatPrice(highValue)}`, {
       anchor: "center",
       fill: COLORS.text,
       bg: "#ffffff",
       outline: "#d7dbde",
       font: "bold 10px Helvetica",
     });
-    this.drawTextBox(ctx, lowX, lowY + 28, `Low  ${formatPrice(lowValue)}`, {
+    this.drawTextBox(ctx, lowX, lowLabelY, `Low  ${formatPrice(lowValue)}`, {
       anchor: "center",
       fill: COLORS.text,
       bg: "#ffffff",
@@ -930,7 +1205,7 @@ class TradingWebChart {
       font: "bold 10px Helvetica",
     });
 
-    if (this.selectedIndicators.length) {
+    if (this.paneIndicators().length) {
       this.drawIndicatorPanes(ctx, visible, left, right, indicatorTop, bottom, bodyWidth, width);
       ctx.save();
       ctx.strokeStyle = this.resizingDivider ? "#738271" : "#a8b7a2";
@@ -1173,7 +1448,8 @@ function renderBottomMeta() {
     elements.bottomMeta.textContent = "Waiting for first refresh…";
     return;
   }
-  const resizeHint = state.selectedIndicators.length ? " · Drag divider to resize panes" : "";
+  const paneIndicatorCount = state.selectedIndicators.filter((indicator) => PANE_INDICATORS.has(indicator)).length;
+  const resizeHint = paneIndicatorCount ? " · Drag divider to resize panes" : "";
   if (state.hoverIndex === null) {
     elements.bottomMeta.textContent = `Drag chart to pan · Scroll to zoom${resizeHint} · ${bundle.interval_label} · Last update successful`;
     return;
