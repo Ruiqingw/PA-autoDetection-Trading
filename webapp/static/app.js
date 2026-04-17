@@ -31,6 +31,7 @@ const state = {
 };
 
 const CLIENT_CACHE_TTL_MS = 20_000;
+const LOCAL_SNAPSHOT_KEY = "trading-dashboard:last-payload";
 
 const elements = {
   symbolChipLabel: document.getElementById("symbolChipLabel"),
@@ -97,6 +98,32 @@ function formatCrosshairTime(isoString) {
   const hours = String(date.getUTCHours()).padStart(2, "0");
   const minutes = String(date.getUTCMinutes()).padStart(2, "0");
   return `${year}-${month}-${day} ${hours}:${minutes}`;
+}
+
+function savePayloadSnapshot(payload) {
+  try {
+    window.localStorage.setItem(
+      LOCAL_SNAPSHOT_KEY,
+      JSON.stringify({
+        savedAt: Date.now(),
+        payload,
+      }),
+    );
+  } catch (_error) {
+    // Ignore storage failures; live refresh still works.
+  }
+}
+
+function loadPayloadSnapshot() {
+  try {
+    const raw = window.localStorage.getItem(LOCAL_SNAPSHOT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.payload?.bundles) return null;
+    return parsed.payload;
+  } catch (_error) {
+    return null;
+  }
 }
 
 function niceStep(rawStep) {
@@ -1480,6 +1507,8 @@ function renderAll() {
 function applyPayload(payload) {
   state.payload = payload;
   state.hoverIndex = null;
+  state.selectedInterval = payload.selected_interval ?? state.selectedInterval;
+  savePayloadSnapshot(payload);
   if (!state.payload.bundles[state.selectedSymbol]) {
     state.selectedSymbol = state.payload.selected_symbol;
   }
@@ -1599,6 +1628,11 @@ function bindControls() {
 }
 
 bindControls();
+const cachedStartupPayload = loadPayloadSnapshot();
+if (cachedStartupPayload) {
+  applyPayload(cachedStartupPayload);
+  setStatus(`Showing cached ${formatIntervalLabel(state.selectedInterval)} snapshot…`);
+}
 refreshData().catch((error) => {
   console.error(error);
   setStatus(`Refresh failed: ${error.message}`);
