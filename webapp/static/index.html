@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Crypto Trading Assistant</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="page">
+      <main class="app-shell">
+        <aside class="toolbar" aria-label="Tools">
+          <div class="tool-group">
+            <button class="tool active">≡</button>
+            <button class="tool">↗</button>
+            <button class="tool">⌁</button>
+            <button class="tool">⊕</button>
+          </div>
+          <div class="tool-group">
+            <button class="tool">╱</button>
+            <button class="tool">▦</button>
+            <button class="tool">☰</button>
+          </div>
+          <div class="tool-group">
+            <button class="tool">◔</button>
+          </div>
+        </aside>
+
+        <section class="workspace">
+          <div class="topbar">
+            <div class="topbar__left">
+              <div class="symbol-chip">
+                <span class="symbol-chip__badge">B</span>
+                <span id="symbolChipLabel">BTCUSD</span>
+              </div>
+              <div id="timeframeButtons" class="control-row"></div>
+              <div id="modeButtons" class="control-row"></div>
+              <div class="control-row">
+                <button id="indicatorsButton" class="control-button">Indicators</button>
+                <div id="indicatorPopup" class="indicator-popup hidden"></div>
+                <button class="chip-button">Replay</button>
+              </div>
+            </div>
+            <div class="topbar__right">
+              <button id="refreshButton" class="pill-button">Refresh</button>
+              <button id="autoButton" class="pill-button">Auto: Off</button>
+              <div id="statusChip" class="status-chip">
+                <span class="status-chip__dot"></span>
+                <span id="statusText">Waiting for first refresh…</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="workspace__body">
+            <section class="chart-column">
+              <div class="chart-header">
+                <div class="chart-header__line">
+                  <h2 id="chartTitle">Loading market data…</h2>
+                  <span id="chartContext" class="chart-header__context"></span>
+                  <span id="openValue" class="metric metric--red">Open --</span>
+                  <span id="highValue" class="metric metric--green">High --</span>
+                  <span id="lowValue" class="metric">Low --</span>
+                  <span id="closeValue" class="metric metric--red">Close --</span>
+                  <span id="changeValue" class="metric metric--green">--</span>
+                </div>
+                <div class="chart-header__line chart-header__line--ema">
+                  <span id="ema12" class="ema ema--12">EMA 12 --</span>
+                  <span id="ema144" class="ema ema--144">EMA 144 --</span>
+                  <span id="ema169" class="ema ema--169">EMA 169 --</span>
+                  <span id="ema238" class="ema ema--238">EMA 238 --</span>
+                  <span id="ema338" class="ema ema--338">EMA 338 --</span>
+                </div>
+              </div>
+
+              <div class="chart-shell">
+                <canvas id="chartCanvas"></canvas>
+              </div>
+            </section>
+
+            <aside class="sidebar">
+              <section class="panel watchlist-panel">
+                <div class="panel__head">
+                  <div>
+                    <h3>Watchlist</h3>
+                    <p>Closest to your reference layout</p>
+                  </div>
+                  <button class="chip-button">+ Add</button>
+                </div>
+                <div class="watchlist-table">
+                  <div class="watchlist-table__head">
+                    <span>Symbol</span>
+                    <span>Last</span>
+                    <span>Chg</span>
+                    <span>Chg%</span>
+                  </div>
+                  <div id="watchlistRows"></div>
+                </div>
+              </section>
+
+              <section class="panel setup-panel">
+                <div class="panel__head panel__head--stacked">
+                  <h3>Current setup</h3>
+                  <p>Assistant panel inside the TV-like shell</p>
+                </div>
+                <div id="setupRows" class="setup-rows"></div>
+                <p id="setupNote" class="setup-note"></p>
+              </section>
+            </aside>
+          </div>
+
+          <div class="bottom-bar">
+            <div class="range-row">
+              <span class="range-chip">1D</span>
+              <span class="range-chip">5D</span>
+              <span class="range-chip active">1M</span>
+              <span class="range-chip">3M</span>
+              <span class="range-chip">YTD</span>
+              <span class="range-chip">1Y</span>
+              <span class="range-chip">All</span>
+            </div>
+            <div id="bottomMeta" class="bottom-meta">Waiting for first refresh…</div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="/static/app.js"></script>
+  </body>
+</html>

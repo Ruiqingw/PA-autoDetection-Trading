@@ -2,7 +2,7 @@
 
 Discretionary crypto trading assistant built on Kraken public market data.
 
-This project is designed for human-in-the-loop trading, not blind auto-execution. It fetches public market data, stores it locally, computes order-flow and market-response features, detects explicit price-action setups, and surfaces the results through scripts, alerts, and a lightweight TradingView-inspired desktop dashboard.
+This project is designed for human-in-the-loop trading, not blind auto-execution. It fetches public market data, stores it locally, computes order-flow and market-response features, detects explicit price-action setups, and surfaces the results through scripts, alerts, and a lightweight TradingView-inspired browser dashboard.
 
 ## What It Does
 
@@ -41,7 +41,7 @@ The default product direction is research, monitoring, and decision support.
 The repository currently includes both:
 
 - a backend monitoring pipeline
-- a local desktop GUI
+- a local browser dashboard
 
 It is already usable for exploratory monitoring and indicator research, but it is still an early-stage trading research tool rather than a finished production platform.
 
@@ -109,7 +109,19 @@ pytest
 python -m scripts.run_gui
 ```
 
-### 4. Run the Backend Monitor
+### 4. Launch the Web App
+
+```bash
+python scripts/run_web.py
+```
+
+Then open:
+
+```text
+http://127.0.0.1:8765
+```
+
+### 5. Run the Backend Monitor
 
 ```bash
 python -m scripts.run_monitor --symbols BTC/USD ETH/USD SOL/USD --iterations 1
